@@ -9,7 +9,7 @@ API_URL = os.environ.get("API_URL", "https://email-generator-api.onrender.com")
 # Page configuration
 st.set_page_config(
     page_title="AI Email Generator",
-    page_icon="✉️",
+    page_icon="✉",
     layout="wide"
 )
 
@@ -39,11 +39,14 @@ st.markdown("""
         margin-top: 1rem;
         margin-bottom: 1rem;
     }
+    .send-button {
+        background-color: #1E3A8A !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # App title and description
-st.title("✉️ AI Personalized Email Generator")
+st.title("✉ AI Personalized Email Generator")
 st.markdown("Generate professional, personalized emails tailored to your specific needs.")
 
 # Check backend health
@@ -56,7 +59,7 @@ def check_backend_health():
         return False
 
 if not check_backend_health():
-    st.warning("⚠️ Backend API service is currently unavailable. Please try again later.")
+    st.warning("⚠ Backend API service is currently unavailable. Please try again later.")
 
 # Create two columns for input and output
 col1, col2 = st.columns([1, 1])
@@ -67,8 +70,21 @@ with col1:
     # Basic info
     purpose = st.text_input("Purpose of Email", placeholder="Job application, meeting request, follow-up, etc.")
     
-    recipient = st.text_input("Recipient (optional)", placeholder="e.g., HR Manager, John Smith")
-    sender_name = st.text_input("Your Name (optional)", placeholder="Your full name")
+    # Recipient information
+    st.markdown("##### Recipient Information")
+    recipient = st.text_input("Recipient Name", placeholder="e.g., HR Manager, John Smith")
+    recipient_email = st.text_input("Recipient Email Address", placeholder="recipient@example.com")
+    
+    # Sender information
+    st.markdown("##### Your Information")
+    sender_name = st.text_input("Your Name", placeholder="Your full name")
+    sender_email = st.text_input("Your Email Address", placeholder="your@example.com")
+    
+    # Email service password (with warning)
+    st.markdown("##### Email Authentication")
+    sender_password = st.text_input("Your Email Password/App Password", 
+                                   type="password", 
+                                   help="For Gmail, use an App Password. Go to Google Account → Security → 2-Step Verification → App passwords")
     
     tone = st.selectbox(
         "Email Tone",
@@ -102,7 +118,7 @@ with col1:
                 label_visibility="collapsed"
             )
         with col_delete:
-            if st.button("🗑️", key=f"delete_{i}") and len(st.session_state.key_points) > 1:
+            if st.button("🗑", key=f"delete_{i}") and len(st.session_state.key_points) > 1:
                 st.session_state.key_points.pop(i)
                 st.rerun()
     
@@ -126,7 +142,7 @@ with col2:
     
     # Action buttons for generated email
     if 'generated_email' in st.session_state and st.session_state.generated_email:
-        col_copy, col_save = st.columns(2)
+        col_copy, col_save, col_send = st.columns(3)
         
         with col_copy:
             st.button("📋 Copy to Clipboard", key="copy_button")
@@ -139,6 +155,72 @@ with col2:
                 mime="text/plain",
                 key="download_button"
             )
+            
+        with col_send:
+            email_service = st.selectbox(
+                "Email Service Provider",
+                ["Gmail", "Outlook/Hotmail", "Yahoo", "Other"]
+            )
+            # Configure email settings based on selection
+            if email_service == "Gmail":
+                email_host = "smtp.gmail.com"
+                email_port = 587
+            elif email_service == "Outlook/Hotmail":
+                email_host = "smtp-mail.outlook.com"
+                email_port = 587
+            elif email_service == "Yahoo":
+                email_host = "smtp.mail.yahoo.com"
+                email_port = 587
+            else:
+                email_host = st.text_input("SMTP Server", "smtp.example.com")
+                email_port = st.number_input("SMTP Port", value=587)
+            send_button = st.button("📤 Send Email", key="send_button", type="primary")
+            
+        # Send email function
+        if send_button:
+            # Validate required fields
+            if not recipient_email or not re.match(r"[^@]+@[^@]+\.[^@]+", recipient_email):
+                st.error("Please enter a valid recipient email address.")
+            elif not sender_email or not re.match(r"[^@]+@[^@]+\.[^@]+", sender_email):
+                st.error("Please enter a valid sender email address.")
+            elif not sender_password:
+                st.error("Please enter your email password or app password.")
+            else:
+                with st.spinner("Sending email..."):
+                    try:
+                        # Get email service details from email domain
+                        email_domain = sender_email.split('@')[1].lower()
+                        
+                        # Default to Gmail settings but provide hints for other common providers
+                        email_host = "smtp.gmail.com"
+                        email_port = 587
+                        
+                        # Simple mapping of common email domains to SMTP servers
+                        if "outlook" in email_domain or "hotmail" in email_domain or "live" in email_domain:
+                            email_host = "smtp-mail.outlook.com"
+                        elif "yahoo" in email_domain:
+                            email_host = "smtp.mail.yahoo.com"
+                        
+                        response = requests.post(
+                            f"{API_URL}/send-email",
+                            json={
+                                "email_content": st.session_state.generated_email,
+                                "recipient_email": recipient_email,
+                                "sender_name": sender_name,
+                                "sender_email": sender_email,
+                                "sender_password": sender_password,
+                                "email_host": email_host,
+                                "email_port": email_port
+                            },
+                            timeout=30
+                        )
+                        
+                        if response.status_code == 200 and response.json().get("success", False):
+                            st.success(f"Email successfully sent to {recipient_email}!")
+                        else:
+                            st.error(f"Failed to send email: {response.json().get('error', 'Unknown error')}")
+                    except Exception as e:
+                        st.error(f"Error sending email: {str(e)}")
         
         # Feedback buttons
         st.markdown("### Feedback")
@@ -174,6 +256,9 @@ if generate_button:
                     },
                     timeout=30
                 )
+                st.write(f"Status Code: {response.status_code}")
+                st.write(f"Response Text: {response.text}")
+    
                 
                 if response.status_code == 200 and response.json().get("success", False):
                     email_text = response.json().get("email", "")
@@ -202,18 +287,25 @@ if generate_button:
                 st.error(f"An error occurred: {str(e)}")
 
 # Information about the service
-with st.expander("ℹ️ About this Email Generator"):
+with st.expander("ℹ About this Email Generator"):
     st.markdown("""
     This AI-Powered Email Generator uses Google's Gemini AI to create personalized, professional emails based on your input.
     
-    **Features:**
+    *Features:*
     - Multiple tone options for different situations
     - Key points integration
     - Context-aware generation
     - Professional formatting
+    - Direct email sending to recipients using your own email account
     
-    **All services used are free:**
+    *Email Security Notes:*
+    - Your email password is only used to send the email and is not stored
+    - For Gmail accounts, we recommend using an App Password instead of your regular password
+    - Go to Google Account → Security → 2-Step Verification → App passwords to generate one
+    
+    *All services used are free:*
     - Backend: Flask (Python) on Render
     - Frontend: Streamlit on Streamlit Cloud
     - AI: Google Gemini API (free tier)
-    """)
+    - Email: Uses your own email account's SMTP service
+    """)
